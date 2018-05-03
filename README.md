@@ -1,3 +1,3 @@
-# InterestRates
+# QuantLib
 
-These are scripts to the coursera course "Interest Rate Models" by Damir Filipović. 
+Code experiments in Python2 
