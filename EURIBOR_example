@@ -317,7 +317,7 @@ for n, units in [(1, Months), (3, Months), (6, Months), (9, Months)]:
     F_on = eonia_curve.forwardRate(spot, TARGET().advance(spot, n, units),
                                    Actual360(), Simple).rate()
     F = F_on + alpha + 0.5*beta*t
-    print(F)
+    #print(F)
     synth_helpers.append(DepositRateHelper(QuoteHandle(SimpleQuote(F)),
                                            Period(n, units), 2,
                                            TARGET(), Following, False, Actual360()))
@@ -328,18 +328,18 @@ It is also possible to build synthetic FRAs: their construction is explained in 
 synth_helpers += [FraRateHelper(QuoteHandle(SimpleQuote(rate/100)), months_to_start, euribor12m)
             for rate, months_to_start in [(0.4974, 3), (0.4783, 6), (0.4822, 9), (0.5481, 15), (0.6025, 18)] ]
 
-'''
-Finally, we can extend the long end of the curve by creating synthetic swaps with maturities above
-30 years. To calculate their rates, we add the swap rates against Euribor 6M (quoted up to 60 years)
-to the last quoted basis spread.
-'''
-
-last_basis = 0.066
-synth_helpers += [ SwapRateHelper(QuoteHandle(SimpleQuote((rate+last_basis)/100)),
-                                  Period(tenor, Years), TARGET(), Annual, Unadjusted, 
-                                  Thirty360(), euribor12m, QuoteHandle(), Period(0, Days),
-                                  discount_curve)
-            for rate, tenor in [(2.295, 35), (2.348, 40), (2.421, 50), (2.463, 60)] ]
+#'''
+#Finally, we can extend the long end of the curve by creating synthetic swaps with maturities above
+#30 years. To calculate their rates, we add the swap rates against Euribor 6M (quoted up to 60 years)
+#to the last quoted basis spread.
+#'''
+#
+#last_basis = 0.066
+#synth_helpers += [ SwapRateHelper(QuoteHandle(SimpleQuote((rate+last_basis)/100)),
+#                                  Period(tenor, Years), TARGET(), Annual, Unadjusted, 
+#                                  Thirty360(), euribor12m, QuoteHandle(), Period(0, Days),
+#                                  discount_curve)
+#            for rate, tenor in [(2.295, 35), (2.348, 40), (2.421, 50), (2.463, 60)] ]
 
 euribor12m_curve = PiecewiseLogCubicDiscount(2, TARGET(), helpers+synth_helpers,
                                              Actual365Fixed())
