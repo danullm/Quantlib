@@ -9,7 +9,6 @@ Created on Thu May  3 15:49:15 2018
 from QuantLib import *
 import matplotlib.pyplot as plt
 import seaborn as sns
-import utils
 import pandas as pd
 plt.style.use('seaborn-whitegrid')
 
@@ -78,7 +77,6 @@ yield_rates = pd.DataFrame(y_rates, index = dates)
 # plot
 
 fig, axs = plt.subplots(2,1, sharex = True)
-
 axs[0].plot(forward_rates, label = 'F(t,t+1)')
 axs[0].plot(zero_rates, label = 'L(t)')
 axs[0].plot(yield_rates, label = 'Y(t)')
