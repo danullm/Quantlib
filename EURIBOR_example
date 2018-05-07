@@ -56,16 +56,15 @@ eonia_curve.enableExtrapolation()
 
 
 '''
-EURIBOR 6 Months
-'''
-
-euribor6m = Euribor6M()
-
-'''
+-------------------------------------------------------------------------------
+EURIBOR 12 Months #############################################################
+-------------------------------------------------------------------------------
 The first instrument used in the paper if the TOM
 6-months FRA, which can be instantiated as a 6-months deposit with 3 fixing days; its rate (and
 those of all other FRAs) is retrieved from figure 6 in the paper.
 '''
+
+euribor6m = Euribor6M()
 
 helpers = [ DepositRateHelper(QuoteHandle(SimpleQuote(0.312/100)), Period(6,Months), 3,
                               TARGET(), Following, False, Actual360()) ]
@@ -126,22 +125,246 @@ last_fra_end = last_fra_start + Period(6, Months)
 last_fra_start = float(last_fra_start - today)/360
 last_fra_end = float(last_fra_end - today)/360
 
+#fig, ax = plt.subplots()
+#
+#ax.plot(dates_plot, e6m_rates)
+#
+#axins = inset_axes(ax, 4, 2 , loc=4)
+#axins.plot(dates_plot, e6m_rates)
+#
+#
+#x1, x2, y1, y2 = 0, 3, 0.0022, 0.0115 # specify the limits2.5
+#axins.set_xlim(x1, x2) # apply the x-limits
+#axins.set_ylim(y1, y2) # apply the y-limits
+#axins.axvline( x = last_fra_start, c = 'black' )
+#axins.axvline( x = last_fra_end, c = 'black' )
+#
+#plt.yticks(visible=False)
+#plt.xticks(visible=False)
+#
+#from mpl_toolkits.axes_grid1.inset_locator import mark_inset
+#mark_inset(ax, axins, loc1=2, loc2=4, fc="none", ec="0.5")
+
+
+'''
+Synthetic deposits
+
+In short, the reason is that the short end of the curve (which is required for pricing FRAs; for instance,
+the 1x7 FRA required the discount factor at 1 month from now) is extrapolated backwards from the
+first quoted pillar at 6 months and is not quite correct. This leads to oscillations as soon as the curve
+is out of the tight strip of FRA quotes.
+One way to correct this is to add synthetic deposits with short tenors, as explained in section 4.4.2
+of the paper.
+...
+Once the basis is known, we can calculate synthetic deposit rates R(0, T ) for any maturity T .
+Depending on how many polynomial coefficients we want to determine, we’ll need a corresponding
+number of market quotes; by replacing their values and those of the OIS rates in equation 88 we can
+solve for α, β and any other coefficient.
+...
+For instance, to determine both α and β, we can use the TOM 6-months and the
+1x7 FRAs:
+'''
+
+euribor6m_curve_0 = euribor6m_curve
+day_counter = euribor6m.dayCounter()
+
+start = TARGET().advance(spot, 1, Days)
+end = TARGET().advance(start, 6, Months)
+
+F_x = euribor6m_curve_0.forwardRate(start, end, Actual360(), Simple).rate()
+F_on = eonia_curve.forwardRate(start, end, Actual360(), Simple).rate()
+
+T_x0 = day_counter.yearFraction(start, end)
+Delta0 = F_x - F_on
+
+start = TARGET().advance(spot, 1, Months)
+end = TARGET().advance(start, 6, Months)
+
+F_x = euribor6m_curve_0.forwardRate(start, end, Actual360(), Simple).rate()
+F_on = eonia_curve.forwardRate(start, end, Actual360(), Simple).rate()
+
+T_x1 = day_counter.yearFraction(start, end)
+Delta1 = F_x - F_on
+
+t1 = day_counter.yearFraction(spot, start)
+t2 = day_counter.yearFraction(spot, end)
+
+L = np.array([[T_x0, 0.5*T_x0**2], [T_x1, 0.5*(t2**2-t1**2)]])
+b = np.array([Delta0*T_x0, Delta1*T_x1])
+
+alpha, beta = np.linalg.solve(L,b)
+
+'''
+we can create synthetic deposits
+'''
+
+synth_helpers = []
+
+for n, units in [(1,Days), (1,Weeks), (2,Weeks), (3,Weeks), 
+                 (1, Months), (2, Months), (3, Months), (4, Months), (5, Months)]:
+    t = day_counter.yearFraction(spot, TARGET().advance(spot, n, units))
+    F_on = eonia_curve.forwardRate(spot, TARGET().advance(spot, n, units),
+                                   Actual360(), Simple).rate()
+    F = F_on + alpha + 0.5*beta*t
+    synth_helpers.append(DepositRateHelper(QuoteHandle(SimpleQuote(F)),
+                                           Period(n, units), 2,
+                                           TARGET(), Following, False, Actual360()))
+
+euribor6m_curve = PiecewiseLogCubicDiscount(2, TARGET(),
+                                            helpers+synth_helpers,
+                                            Actual365Fixed())
+
+euribor6m_curve.enableExtrapolation()
+
+dates = [ spot+Period(i,Weeks) for i in range(0, 52*4+1) ]
+rates_0 = [ euribor6m_curve_0.forwardRate(d, euribor6m.maturityDate(d), Actual360(), Simple).rate()
+            for d in dates ]
+rates = [ euribor6m_curve.forwardRate(d, euribor6m.maturityDate(d), Actual360(), Simple).rate() 
+            for d in dates ]
+
+dates_plot = [float(x - today)/360 for x in dates]
+
+#fig, ax = plt.subplots()
+#
+#ax.plot(dates_plot, rates_0, '-', label = 'uncorrected')
+#ax.plot(dates_plot, rates, label = 'corrected grade 2')
+#
+#ax.axvline( x = last_fra_start, c = 'black' )
+#ax.axvline( x = last_fra_end, c = 'black' )
+#
+#ax.legend(loc = 0, frameon=True, shadow = True)
+#
+
+
+'''
+-------------------------------------------------------------------------------
+EURIBOR 12 Months #############################################################
+-------------------------------------------------------------------------------
+For the 12-months curve, we’ll start with the quoted 12-months deposit and 12x24 FRA
+'''
+
+euribor12m = EURLibor1Y()
+
+helpers = [ DepositRateHelper(QuoteHandle(SimpleQuote(0.54/100)), Period(12,Months), 2, TARGET(), Following, False, Actual360()) ]
+helpers += [ FraRateHelper(QuoteHandle(SimpleQuote(0.5070/100)), 12, euribor12m) ]
+
+'''
+Unfortunately, there are no quoted swap rates against 12-months Euribor. However, the market
+quotes 6- vs 12-months basis swaps; and more importantly, it quotes them as a portfolio of two IRS,
+payer and receiver, both accruing annual fixed coupons against Euribor 6M and 12M, respectively.
+The spread between the two fixed legs is quoted so that it sets the NPV of the portfolio at zero.
+Given that the market also quotes the fair fixed rate for one of the two swaps, i.e., the one paying a
+fixed rate against Euribor 6M, it’s straightforward to see that the fair fixed rate for the swap against
+Euribor 12M can be obtained by just adding the 6M rate to the basis spread: that is, if the NPV of
+a swap S 1 paying K against Euribor 6M is 0, and if the NPV of the portfolio of S 1 minus another
+swap S 2 paying K + S against Euribor 12M is also 0, then the NPV of S 2 must be 0 as well.
+'''
+
+e12m_tenor = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 20, 25, 30]
+e12m_basis = [17.90, 16.40, 15.10, 13.90, 13.00, 12.30, 11.80, 11.30, 10.90,
+             10.60, 9.30, 8.00, 7.20, 6.60]
+e6m_rate = [0.424, 0.576, 0.762, 0.954, 1.135, 1.303, 1.452, 1.584, 1.703,
+             1.809, 2.037, 2.187, 2.234, 2.256]
+
+e12m_swaps = zip(e6m_rate, e12m_basis, e12m_tenor)
+
+helpers += [SwapRateHelper(QuoteHandle(SimpleQuote(rate/100+basis/10000)), Period(tenor, Years), TARGET(),
+                           Annual, Unadjusted, Thirty360(), euribor12m, QuoteHandle(), Period(0, Days),
+                           discount_curve) for rate, basis, tenor in e12m_swaps]
+
+
+euribor12m_curve = PiecewiseLogCubicDiscount(2, TARGET(), helpers,
+                                             Actual365Fixed())
+euribor12m_curve.enableExtrapolation()
+
+euribor12m_curve_0 = euribor12m_curve
+day_counter = euribor12m.dayCounter()
+
+start = TARGET().advance(spot, 1, Days)
+end = TARGET().advance(start, 12, Months)
+
+F_x = euribor12m_curve_0.forwardRate(start, end, Actual360(), Simple).rate()
+F_on = eonia_curve.forwardRate(start, end, Actual360(), Simple).rate()
+
+T_x0 = day_counter.yearFraction(start, end)
+Delta0 = F_x - F_on
+
+start = TARGET().advance(spot, 12, Months)
+end = TARGET().advance(start, 6, Months)
+
+F_x = euribor12m_curve_0.forwardRate(start, end, Actual360(), Simple).rate()
+F_on = eonia_curve.forwardRate(start, end, Actual360(), Simple).rate()
+
+T_x1 = day_counter.yearFraction(start, end)
+Delta1 = F_x - F_on
+
+t1 = day_counter.yearFraction(spot, start)
+t2 = day_counter.yearFraction(spot, end)
+
+L = np.array([[T_x0, 0.5*T_x0**2], [T_x1, 0.5*(t2**2-t1**2)]])
+b = np.array([Delta0*T_x0, Delta1*T_x1])
+
+alpha, beta = np.linalg.solve(L,b)
+
+'''
+we can create synthetic deposits
+'''
+
+synth_helpers = []
+
+for n, units in [(1, Months), (3, Months), (6, Months), (9, Months)]:
+    t = day_counter.yearFraction(spot, TARGET().advance(spot, n, units))
+    F_on = eonia_curve.forwardRate(spot, TARGET().advance(spot, n, units),
+                                   Actual360(), Simple).rate()
+    F = F_on + alpha + 0.5*beta*t
+    print(F)
+    synth_helpers.append(DepositRateHelper(QuoteHandle(SimpleQuote(F)),
+                                           Period(n, units), 2,
+                                           TARGET(), Following, False, Actual360()))
+'''    
+It is also possible to build synthetic FRAs: their construction is explained in the paper.
+'''
+
+synth_helpers += [FraRateHelper(QuoteHandle(SimpleQuote(rate/100)), months_to_start, euribor12m)
+            for rate, months_to_start in [(0.4974, 3), (0.4783, 6), (0.4822, 9), (0.5481, 15), (0.6025, 18)] ]
+
+'''
+Finally, we can extend the long end of the curve by creating synthetic swaps with maturities above
+30 years. To calculate their rates, we add the swap rates against Euribor 6M (quoted up to 60 years)
+to the last quoted basis spread.
+'''
+
+last_basis = 0.066
+synth_helpers += [ SwapRateHelper(QuoteHandle(SimpleQuote((rate+last_basis)/100)),
+                                  Period(tenor, Years), TARGET(), Annual, Unadjusted, 
+                                  Thirty360(), euribor12m, QuoteHandle(), Period(0, Days),
+                                  discount_curve)
+            for rate, tenor in [(2.295, 35), (2.348, 40), (2.421, 50), (2.463, 60)] ]
+
+euribor12m_curve = PiecewiseLogCubicDiscount(2, TARGET(), helpers+synth_helpers,
+                                             Actual365Fixed())
+euribor12m_curve.enableExtrapolation()
+
+
+spot = euribor12m_curve.referenceDate()
+dates = [ spot+Period(i,Months) for i in range(0, 60*12+1) ]
+rates_0 = [ euribor12m_curve_0.forwardRate(d, euribor12m.maturityDate(d), Actual360(), Simple).rate()
+            for d in dates ]
+rates = [ euribor12m_curve.forwardRate(d, euribor12m.maturityDate(d), Actual360(), Simple).rate()
+            for d in dates ]
+
+
+
+dates_plot = [float(x - today)/360 for x in dates]
+
 fig, ax = plt.subplots()
 
-ax.plot(dates_plot, e6m_rates)
+ax.plot(dates_plot, rates_0, label = 'market data')
+ax.plot(dates_plot, rates, label = 'synth data')
+ax.legend(loc = 0, frameon=True, shadow = True)
 
-axins = inset_axes(ax, 4, 2 , loc=4)
-axins.plot(dates_plot, e6m_rates)
 
 
-x1, x2, y1, y2 = 0, 3, 0.0022, 0.0115 # specify the limits2.5
-axins.set_xlim(x1, x2) # apply the x-limits
-axins.set_ylim(y1, y2) # apply the y-limits
-axins.axvline( x = last_fra_start, c = 'green' )
-axins.axvline( x = last_fra_end, c = 'green' )
 
-plt.yticks(visible=False)
-plt.xticks(visible=False)
 
-from mpl_toolkits.axes_grid1.inset_locator import mark_inset
-mark_inset(ax, axins, loc1=2, loc2=4, fc="none", ec="0.5")
+
